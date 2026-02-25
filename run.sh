@@ -1,28 +1,20 @@
 #!/bin/bash
+cd "$(dirname "$0")"
 
-# Simple run script for the background
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-cd "$SCRIPT_DIR"
+# Kill ANY existing instance first (by name, not just PID file)
+pkill -f "python.*main\.py" 2>/dev/null
+sleep 1
 
-PID_FILE="$SCRIPT_DIR/bot.pid"
+# Clean up stale PID file
+rm -f bot.pid
 
-# Check if already running
-if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-    echo "Bot is already running (PID: $(cat "$PID_FILE"))."
-    exit 1
-fi
+# Activate venv
+source ../venv/bin/activate 2>/dev/null || source venv/bin/activate 2>/dev/null
 
-# Source virtual environment if it exists
-if [ -d "venv" ]; then
-    source venv/bin/activate
-fi
-
-# Run the bot in the background with nohup
-nohup python3 main.py > bot.log 2>&1 &
-
-# Write PID file
-echo $! > "$PID_FILE"
+# Start in background
+nohup python3 main.py >> /dev/null 2>&1 &
+echo $! > bot.pid
 
 echo "PancakeSwap V3 Monitor Bot started in the background."
-echo "PID: $!"
+echo "PID: $(cat bot.pid)"
 echo "View logs with: tail -f bot.log"

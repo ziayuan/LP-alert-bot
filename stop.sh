@@ -1,21 +1,19 @@
 #!/bin/bash
+cd "$(dirname "$0")"
 
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-PID_FILE="$SCRIPT_DIR/bot.pid"
-
-if [ ! -f "$PID_FILE" ]; then
-    echo "No PID file found. Bot may not be running."
-    exit 1
+# Kill by PID file if it exists
+if [ -f bot.pid ]; then
+    PID=$(cat bot.pid)
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "Stopping bot (PID: $PID)..."
+        kill "$PID"
+        sleep 2
+        kill -9 "$PID" 2>/dev/null
+    fi
+    rm -f bot.pid
 fi
 
-PID=$(cat "$PID_FILE")
+# Also kill any orphaned instances by name
+pkill -f "python.*main\.py" 2>/dev/null
 
-if kill -0 "$PID" 2>/dev/null; then
-    echo "Stopping bot (PID: $PID)..."
-    kill "$PID"
-    rm -f "$PID_FILE"
-    echo "Bot stopped successfully."
-else
-    echo "Process $PID is not running. Cleaning up stale PID file."
-    rm -f "$PID_FILE"
-fi
+echo "Bot stopped."
