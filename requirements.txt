@@ -1,0 +1,5 @@
+web3==7.14.1
+python-telegram-bot==22.5
+python-dotenv==1.2.1
+eth-typing==5.2.1
+requests==2.32.5

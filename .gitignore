@@ -1,0 +1,21 @@
+# Environment & Secrets
+.env
+
+# Logs
+bot.log
+bot.log.*
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+
+# PID file
+bot.pid
+
+# OS
+.DS_Store
