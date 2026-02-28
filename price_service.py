@@ -147,7 +147,7 @@ class PriceService:
                     if price is not None:
                         self._set_cache(f"addr:{addr}", price)
                         result[sym] = price
-                        logger.debug(f"Price via contract: {sym} ({addr}) = ${price}")
+                        logger.info(f"Price via contract: {sym} ({addr}) = ${price}")
                     else:
                         still_missing.append(token)
 
@@ -189,7 +189,7 @@ class PriceService:
                         price = data.get(cg_id, {}).get("usd")
                         if price is not None:
                             self._set_cache(f"sym:{sym}", price)
-                            logger.debug(f"Price via symbol fallback: {sym} = ${price}")
+                            logger.info(f"Price via symbol fallback: {sym} = ${price}")
                         result[sym] = price
                 except Exception as e:
                     logger.error(f"Symbol-based price lookup failed: {e}")

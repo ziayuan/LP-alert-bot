@@ -121,13 +121,19 @@ class TelegramController:
         dist_upper = (p_up - p_cur) / p_cur * 100 if p_up > p_cur else 0
 
         # Fetch USD prices for both tokens (contract address lookup, symbol fallback)
-        prices = price_service.get_token_prices(
-            chain=state["chain"],
-            tokens=[
-                {"symbol": t0, "address": state["token0_address"]},
-                {"symbol": t1, "address": state["token1_address"]},
-            ],
-        )
+        try:
+            prices = price_service.get_token_prices(
+                chain=state["chain"],
+                tokens=[
+                    {"symbol": t0, "address": state["token0_address"]},
+                    {"symbol": t1, "address": state["token1_address"]},
+                ],
+            )
+        except Exception as e:
+            logger.error(f"Price fetch error: {e}", exc_info=True)
+            prices = {}
+
+        logger.info(f"[{state['chain']}] Prices for #{state['position_id']}: {prices}")
 
         def usd_str(amount, price_usd):
             """Format a USD value string, or '?' if price unavailable."""
