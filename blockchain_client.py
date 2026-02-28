@@ -1,11 +1,17 @@
+import math
 import logging
 from web3 import Web3
 from web3.middleware import ExtraDataToPOAMiddleware
 from abis.constants import ERC20_ABI, POOL_ABI, POSITION_MANAGER_ABI, FACTORY_ABI
 from config import PositionConfig
-from v3_math import tick_to_price, get_fee_growth_inside, calculate_pending_fees
+from v3_math import tick_to_price, get_fee_growth_inside, calculate_pending_fees, get_amounts_for_liquidity, Q96
 
 logger = logging.getLogger(__name__)
+
+
+def tick_to_sqrt_price_x96(tick: int) -> int:
+    """Convert a tick to sqrtPriceX96 (integer)."""
+    return int(math.sqrt(1.0001 ** tick) * Q96)
 
 
 class BlockchainClient:
@@ -77,6 +83,14 @@ class BlockchainClient:
         self._parse_initial_deposit_tx()
         self.is_initialized = True
 
+    def reinitialize(self):
+        """Reset and re-initialize after a position update (new ID / tx hash)."""
+        self.position_id = self.config.position_id
+        self.initial_deposit_token0 = 0.0
+        self.initial_deposit_token1 = 0.0
+        self.is_initialized = False
+        self.initialize_position()
+
     def _parse_initial_deposit_tx(self):
         """Parses the TX Hash to find the exact amounts deposited."""
         tx_hash = self.config.initial_tx_hash
@@ -125,6 +139,7 @@ class BlockchainClient:
 
         # 1. Pool state
         slot0 = self.pool_contract.functions.slot0().call()
+        sqrt_price_x96 = slot0[0]
         current_tick = slot0[1]
         current_price = tick_to_price(current_tick, self.token0_decimals, self.token1_decimals)
 
@@ -165,12 +180,26 @@ class BlockchainClient:
         price_upper = tick_to_price(tick_upper, self.token0_decimals, self.token1_decimals)
         bounds = sorted([price_lower, price_upper])
 
+        # 4. Current token amounts in the position
+        sqrt_price_a = tick_to_sqrt_price_x96(tick_lower)
+        sqrt_price_b = tick_to_sqrt_price_x96(tick_upper)
+        amount0_raw, amount1_raw = get_amounts_for_liquidity(
+            sqrt_price_x96, sqrt_price_a, sqrt_price_b, liquidity
+        )
+        current_amount0 = amount0_raw / (10 ** self.token0_decimals)
+        current_amount1 = amount1_raw / (10 ** self.token1_decimals)
+
         return {
             "chain": self.chain,
             "position_id": self.position_id,
             "pair": f"{self.token0_symbol}/{self.token1_symbol}",
+            "token0_symbol": self.token0_symbol,
+            "token1_symbol": self.token1_symbol,
+            "token0_address": self.token0,
+            "token1_address": self.token1,
             "current_tick": current_tick,
             "current_price": current_price,
+            "sqrt_price_x96": sqrt_price_x96,
             "tick_lower": tick_lower,
             "tick_upper": tick_upper,
             "price_lower": bounds[0],
@@ -183,5 +212,9 @@ class BlockchainClient:
             "initial_deposit": {
                 self.token0_symbol: self.initial_deposit_token0,
                 self.token1_symbol: self.initial_deposit_token1
-            }
+            },
+            "current_amounts": {
+                self.token0_symbol: current_amount0,
+                self.token1_symbol: current_amount1
+            },
         }

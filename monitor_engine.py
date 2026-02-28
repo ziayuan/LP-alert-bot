@@ -3,7 +3,7 @@ import logging
 from typing import Dict, List
 from blockchain_client import BlockchainClient
 from telegram_bot import TelegramController
-from config import Config
+from config import Config, PositionConfig
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ class MonitorEngine:
     """
     Monitors multiple positions across multiple chains.
     Each position has its own state machine to prevent alert spam.
+    Supports dynamic add/remove/update of clients at runtime.
     """
 
     def __init__(self, clients: List[BlockchainClient], tg_controller: TelegramController):
@@ -24,6 +25,9 @@ class MonitorEngine:
         self.states: Dict[str, int] = {}
         for c in clients:
             self.states[f"{c.chain}:{c.position_id}"] = 0
+
+        # List of initialized clients that are actively being monitored
+        self._active_clients: List[BlockchainClient] = []
 
     async def start(self):
         self.is_running = True
@@ -43,29 +47,99 @@ class MonitorEngine:
                 "🔴 *Some positions failed to initialize:*\n" + "\n".join(failed)
             )
 
-        ready = [c for c in self.clients if c.is_initialized]
-        if not ready:
+        self._active_clients = [c for c in self.clients if c.is_initialized]
+        if not self._active_clients:
             await self.tg_controller.send_alert("🔴 *No positions initialized. Bot cannot start.*")
             return
 
         summary = "\n".join(
             f"• [{c.chain}] #{c.position_id} ({c.token0_symbol}/{c.token1_symbol})"
-            for c in ready
+            for c in self._active_clients
         )
         await self.tg_controller.send_alert(
             f"🟢 *Monitor Started*\n\n"
-            f"Tracking {len(ready)} position(s):\n{summary}\n"
+            f"Tracking {len(self._active_clients)} position(s):\n{summary}\n"
             f"Interval: `{Config.CHECK_INTERVAL_SECONDS}s`"
         )
 
         while self.is_running:
-            for client in ready:
+            for client in list(self._active_clients):  # copy to avoid mutation during iteration
                 await self._check_position(client)
             await asyncio.sleep(Config.CHECK_INTERVAL_SECONDS)
 
     async def stop(self):
         self.is_running = False
         logger.info("Stopping Monitor Engine...")
+
+    # ── Dynamic client management ─────────────────────────────────
+
+    def add_client(self, client: BlockchainClient) -> str:
+        """
+        Add a new client to the monitor at runtime.
+        Initializes the position and adds it to the active list.
+        Returns a status message.
+        """
+        try:
+            client.initialize_position()
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize position: {e}")
+
+        self.clients.append(client)
+        self._active_clients.append(client)
+        self.states[f"{client.chain}:{client.position_id}"] = 0
+        return (f"[{client.chain}] #{client.position_id} "
+                f"({client.token0_symbol}/{client.token1_symbol}) added to monitoring.")
+
+    def remove_client(self, position_id: int) -> str:
+        """Remove a client from monitoring by position ID."""
+        target = None
+        for c in self.clients:
+            if c.position_id == position_id:
+                target = c
+                break
+
+        if not target:
+            raise ValueError(f"Position #{position_id} not found in active monitors.")
+
+        key = f"{target.chain}:{target.position_id}"
+        self.clients.remove(target)
+        if target in self._active_clients:
+            self._active_clients.remove(target)
+        self.states.pop(key, None)
+
+        return f"[{target.chain}] #{position_id} removed from monitoring."
+
+    def update_client(self, old_id: int) -> str:
+        """
+        Re-initialize an existing client after its config has been updated.
+        The Config.update_position() should have been called before this.
+        """
+        target = None
+        for c in self.clients:
+            if c.config.position_id != c.position_id:
+                # Config was updated but client hasn't re-initialized yet
+                target = c
+                break
+            if c.position_id == old_id:
+                target = c
+                break
+
+        if not target:
+            raise ValueError(f"Position #{old_id} not found in active monitors.")
+
+        old_key = f"{target.chain}:{old_id}"
+        self.states.pop(old_key, None)
+
+        try:
+            target.reinitialize()
+        except Exception as e:
+            raise RuntimeError(f"Failed to reinitialize position: {e}")
+
+        new_key = f"{target.chain}:{target.position_id}"
+        self.states[new_key] = 0
+
+        return (f"[{target.chain}] #{target.position_id} "
+                f"({target.token0_symbol}/{target.token1_symbol}) updated and re-initialized.")
 
     async def _check_position(self, client: BlockchainClient):
         key = f"{client.chain}:{client.position_id}"

@@ -49,6 +49,9 @@ async def main():
     # 3. Initialize Monitor Engine with all clients
     monitor = MonitorEngine(clients, tg_controller)
 
+    # 4. Wire monitor engine reference back to TG controller (deferred to avoid circular init)
+    tg_controller.set_monitor_engine(monitor)
+
     # Start Telegram Bot polling
     # drop_pending_updates=True: clears any stale server-side getUpdates connections
     # from previous instances that didn't shut down cleanly, preventing 409 Conflict errors.
