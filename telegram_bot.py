@@ -151,52 +151,64 @@ class TelegramController:
         # Earned Fees with USD
         msg += "*💰 Earned Fees*\n"
         total_fees_usd = 0.0
-        fees_usd_available = True
+        has_any_price = False
         for token, amount in state["earned_fees"].items():
             token_price = prices.get(token.upper())
             msg += f"• {amount:.8f} {token}{usd_str(amount, token_price)}\n"
             if token_price is not None:
                 total_fees_usd += amount * token_price
-            else:
-                fees_usd_available = False
-        if fees_usd_available:
+                has_any_price = True
+        if has_any_price:
             msg += f"💵 Total Fees: ~${total_fees_usd:,.2f}\n"
 
         # Initial Deposit with USD
         msg += "\n*📥 Initial Deposit*\n"
         total_deposit_usd = 0.0
-        deposit_usd_available = True
+        deposit_complete = True
         for token, amount in state["initial_deposit"].items():
             token_price = prices.get(token.upper())
             msg += f"• {amount:.6f} {token}{usd_str(amount, token_price)}\n"
             if token_price is not None:
                 total_deposit_usd += amount * token_price
             else:
-                deposit_usd_available = False
-        if deposit_usd_available:
-            msg += f"💵 Total: ~${total_deposit_usd:,.2f}\n"
+                deposit_complete = False
+        if total_deposit_usd > 0:
+            suffix = "" if deposit_complete else " (partial)"
+            msg += f"💵 Total: ~${total_deposit_usd:,.2f}{suffix}\n"
 
         # Current Position with USD
         msg += "\n*📦 Current Position*\n"
         total_position_usd = 0.0
-        position_usd_available = True
+        position_complete = True
         for token, amount in state["current_amounts"].items():
             token_price = prices.get(token.upper())
             msg += f"• {amount:.6f} {token}{usd_str(amount, token_price)}\n"
             if token_price is not None:
                 total_position_usd += amount * token_price
             else:
-                position_usd_available = False
-        if position_usd_available:
-            msg += f"💵 Total: ~${total_position_usd:,.2f}\n"
+                position_complete = False
+        if total_position_usd > 0:
+            suffix = "" if position_complete else " (partial)"
+            msg += f"💵 Total: ~${total_position_usd:,.2f}{suffix}\n"
 
-        # Impermanent Loss
-        if deposit_usd_available and position_usd_available and total_deposit_usd > 0:
+        # Impermanent Loss (only when both sides have full prices)
+        if deposit_complete and position_complete and total_deposit_usd > 0:
             il_usd = total_position_usd - total_deposit_usd
             il_pct = (il_usd / total_deposit_usd) * 100
             il_sign = "+" if il_usd >= 0 else ""
             il_emoji = "📈" if il_usd >= 0 else "📉"
             msg += f"\n{il_emoji} *IL (vs. holding):* {il_sign}${il_usd:,.2f} ({il_sign}{il_pct:.2f}%)\n"
+
+        # APR (annualized fee yield based on position duration)
+        open_ts = state.get("position_open_timestamp", 0)
+        if open_ts > 0 and total_fees_usd > 0 and total_deposit_usd > 0:
+            import time
+            elapsed_seconds = time.time() - open_ts
+            if elapsed_seconds > 0:
+                days_open = elapsed_seconds / 86400
+                apr = (total_fees_usd / total_deposit_usd) * (365 / days_open) * 100
+                msg += (f"\n📊 *Fee APR:* `{apr:.2f}%`"
+                        f" (earned over `{days_open:.1f}` days)\n")
 
         return msg
 

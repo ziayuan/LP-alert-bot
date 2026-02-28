@@ -53,6 +53,7 @@ class BlockchainClient:
         # Cache for initial deposit
         self.initial_deposit_token0 = 0.0
         self.initial_deposit_token1 = 0.0
+        self.position_open_timestamp = 0  # Unix timestamp of initial deposit
         self.is_initialized = False
 
     def initialize_position(self):
@@ -88,6 +89,7 @@ class BlockchainClient:
         self.position_id = self.config.position_id
         self.initial_deposit_token0 = 0.0
         self.initial_deposit_token1 = 0.0
+        self.position_open_timestamp = 0
         self.is_initialized = False
         self.initialize_position()
 
@@ -101,6 +103,11 @@ class BlockchainClient:
         logger.info(f"[{self.chain}] Parsing initial deposit tx: {tx_hash}")
         try:
             receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+
+            # Get block timestamp for APR calculation
+            block = self.w3.eth.get_block(receipt.blockNumber)
+            self.position_open_timestamp = block.timestamp
+            logger.info(f"[{self.chain}] Position opened at block {receipt.blockNumber}, timestamp {self.position_open_timestamp}")
             nft_manager_addr = Web3.to_checksum_address(self.config.position_manager)
 
             INCREASE_LIQ_TOPIC = self.w3.keccak(
@@ -217,4 +224,5 @@ class BlockchainClient:
                 self.token0_symbol: current_amount0,
                 self.token1_symbol: current_amount1
             },
+            "position_open_timestamp": self.position_open_timestamp,
         }

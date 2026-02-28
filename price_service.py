@@ -20,8 +20,8 @@ CHAIN_TO_PLATFORM = {
 SYMBOL_TO_COINGECKO_ID = {
     # BSC tokens
     "BTCB": "bitcoin",
-    "WBNB": "wbnbchain",
-    "BNB": "wbnbchain",
+    "WBNB": "binancecoin",
+    "BNB": "binancecoin",
     "USDT": "tether",
     "USDC": "usd-coin",
     "BUSD": "binance-usd",
