@@ -17,21 +17,41 @@ CHAIN_TO_PLATFORM = {
 }
 
 # Fallback: symbol -> CoinGecko coin ID (used when contract address lookup fails)
+# Wrapped/synthetic tokens are mapped to their underlying asset (1:1 peg)
 SYMBOL_TO_COINGECKO_ID = {
-    # BSC tokens
+    # BTC variants (all pegged 1:1 to BTC)
+    "BTC": "bitcoin",
     "BTCB": "bitcoin",
-    "WBNB": "binancecoin",
+    "WBTC": "bitcoin",
+    "UBTC": "bitcoin",
+    "SBTC": "bitcoin",
+    "STBTC": "bitcoin",
+    "TBTC": "bitcoin",
+    "RENBTC": "bitcoin",
+    "CBBTC": "bitcoin",
+    # BNB variants
     "BNB": "binancecoin",
+    "WBNB": "binancecoin",
+    "SBNB": "binancecoin",
+    # ETH variants
+    "ETH": "ethereum",
+    "WETH": "ethereum",
+    "STETH": "ethereum",
+    "WSTETH": "ethereum",
+    "CBETH": "ethereum",
+    "RETH": "ethereum",
+    # Stablecoins (handled separately but also here for symbol fallback)
     "USDT": "tether",
     "USDC": "usd-coin",
     "BUSD": "binance-usd",
-    "ETH": "ethereum",
-    "WETH": "ethereum",
     # HyperEVM tokens
-    "WHYPE": "hyperliquid",
     "HYPE": "hyperliquid",
+    "WHYPE": "hyperliquid",
+    "LHYPE": "hyperliquid",
     "USDXL": None,  # Stablecoin, pegged to $1
-    "LHYPE": "hyperliquid",  # Liquid staked HYPE
+    # SOL
+    "SOL": "solana",
+    "WSOL": "solana",
 }
 
 # Symbols pegged to $1 (stablecoins)
