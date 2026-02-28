@@ -7,6 +7,7 @@ Includes a simple in-memory cache to avoid rate limiting.
 import time
 import logging
 import requests
+from typing import Optional, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ class PriceService:
     def __init__(self):
         self._cache: dict = {}  # {cache_key: (price_usd, timestamp)}
 
-    def _get_cached(self, key: str) -> float | None:
+    def _get_cached(self, key: str) -> Optional[float]:
         """Return cached price if still fresh, else None."""
         if key in self._cache:
             price, ts = self._cache[key]
@@ -81,8 +82,8 @@ class PriceService:
     def get_token_prices(
         self,
         chain: str,
-        tokens: list[dict],
-    ) -> dict[str, float | None]:
+        tokens: List[dict],
+    ) -> Dict[str, Optional[float]]:
         """
         Get USD prices for tokens on a specific chain.
 

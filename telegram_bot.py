@@ -129,7 +129,7 @@ class TelegramController:
             ],
         )
 
-        def usd_str(amount: float, price_usd: float | None) -> str:
+        def usd_str(amount, price_usd):
             """Format a USD value string, or '?' if price unavailable."""
             if price_usd is None:
                 return ""
