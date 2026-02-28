@@ -95,19 +95,45 @@ class TelegramController:
 
         await update.message.reply_text(f"⏳ Fetching live data for {len(self.clients)} position(s)...")
 
+        # 1. Fetch all position states first
+        states = []
         for client in self.clients:
             try:
                 state = await asyncio.to_thread(client.get_current_state)
-                msg = self._format_status(state)
-                await update.message.reply_text(msg, parse_mode='Markdown')
+                states.append(state)
             except Exception as e:
-                logger.error(f"[{client.chain}] Error in /status for #{client.position_id}: {e}", exc_info=True)
+                logger.error(f"[{client.chain}] Error fetching #{client.position_id}: {e}", exc_info=True)
                 await update.message.reply_text(
                     f"⚠️ [{client.chain}] Position #{client.position_id}: Error fetching data."
                 )
 
+        # 2. Batch-fetch ALL token prices in ONE API call
+        all_symbols = set()
+        for state in states:
+            all_symbols.add(state["token0_symbol"].upper())
+            all_symbols.add(state["token1_symbol"].upper())
+
+        try:
+            prices = price_service.get_prices(list(all_symbols))
+        except Exception as e:
+            logger.error(f"Price batch fetch error: {e}", exc_info=True)
+            prices = {}
+
+        logger.info(f"Batched prices: {prices}")
+
+        # 3. Format and send each position
+        for state in states:
+            try:
+                msg = self._format_status(state, prices)
+                await update.message.reply_text(msg, parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Error formatting #{state['position_id']}: {e}", exc_info=True)
+                await update.message.reply_text(
+                    f"⚠️ [{state['chain']}] Position #{state['position_id']}: Error formatting."
+                )
+
     @staticmethod
-    def _format_status(state: dict) -> str:
+    def _format_status(state: dict, prices: dict) -> str:
         p_cur = state["current_price"]
         p_low = state["price_lower"]
         p_up = state["price_upper"]
@@ -120,23 +146,8 @@ class TelegramController:
         dist_lower = (p_cur - p_low) / p_cur * 100 if p_cur > p_low else 0
         dist_upper = (p_up - p_cur) / p_cur * 100 if p_up > p_cur else 0
 
-        # Fetch USD prices for both tokens (contract address lookup, symbol fallback)
-        try:
-            prices = price_service.get_token_prices(
-                chain=state["chain"],
-                tokens=[
-                    {"symbol": t0, "address": state["token0_address"]},
-                    {"symbol": t1, "address": state["token1_address"]},
-                ],
-            )
-        except Exception as e:
-            logger.error(f"Price fetch error: {e}", exc_info=True)
-            prices = {}
-
-        logger.info(f"[{state['chain']}] Prices for #{state['position_id']}: {prices}")
-
         def usd_str(amount, price_usd):
-            """Format a USD value string, or '?' if price unavailable."""
+            """Format a USD value string, or empty if price unavailable."""
             if price_usd is None:
                 return ""
             return f" (~${amount * price_usd:,.2f})"

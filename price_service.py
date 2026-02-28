@@ -1,7 +1,6 @@
 """
 CoinGecko price service for fetching USD prices of tokens.
-Uses contract addresses for precise lookups (BSC), with symbol fallback for unsupported chains.
-Includes a simple in-memory cache to avoid rate limiting.
+Uses symbol-to-CoinGecko-ID mapping with batched API calls and caching.
 """
 
 import time
@@ -11,13 +10,7 @@ from typing import Optional, Dict, List
 
 logger = logging.getLogger(__name__)
 
-# CoinGecko platform IDs for chains we support
-CHAIN_TO_PLATFORM = {
-    "BSC": "binance-smart-chain",
-    "HyperEVM": "hyperliquid",  # May not be supported yet; will fall back to symbol
-}
-
-# Fallback: symbol -> CoinGecko coin ID (used when contract address lookup fails)
+# Symbol -> CoinGecko coin ID mapping
 # Wrapped/synthetic tokens are mapped to their underlying asset (1:1 peg)
 SYMBOL_TO_COINGECKO_ID = {
     # BTC variants (all pegged 1:1 to BTC)
@@ -63,139 +56,90 @@ CACHE_TTL_SECONDS = 60  # Cache prices for 60 seconds
 
 
 class PriceService:
-    """Fetches and caches USD prices from CoinGecko, preferring contract address lookup."""
+    """Fetches and caches USD prices from CoinGecko via batched symbol lookup."""
 
     def __init__(self):
-        self._cache: dict = {}  # {cache_key: (price_usd, timestamp)}
+        self._cache: Dict[str, tuple] = {}  # {symbol: (price_usd, timestamp)}
 
-    def _get_cached(self, key: str) -> Optional[float]:
+    def _get_cached(self, sym: str) -> Optional[float]:
         """Return cached price if still fresh, else None."""
-        if key in self._cache:
-            price, ts = self._cache[key]
+        if sym in self._cache:
+            price, ts = self._cache[sym]
             if time.time() - ts < CACHE_TTL_SECONDS:
                 return price
         return None
 
-    def _set_cache(self, key: str, price: float):
-        self._cache[key] = (price, time.time())
+    def _set_cache(self, sym: str, price: float):
+        self._cache[sym] = (price, time.time())
 
-    def get_token_prices(
-        self,
-        chain: str,
-        tokens: List[dict],
-    ) -> Dict[str, Optional[float]]:
+    def get_prices(self, symbols: List[str]) -> Dict[str, Optional[float]]:
         """
-        Get USD prices for tokens on a specific chain.
+        Get USD prices for a list of token symbols in a SINGLE API call.
 
         Args:
-            chain: Chain name (e.g. "BSC", "HyperEVM")
-            tokens: List of dicts with 'symbol' and 'address' keys
+            symbols: List of token symbols (e.g. ["BTCB", "WBNB", "WHYPE", "UBTC"])
 
         Returns:
-            {symbol: price_usd} dict
+            {SYMBOL: price_usd_or_None} dict
         """
         result = {}
-        tokens_needing_lookup = []
+        ids_to_fetch = {}  # {coingecko_id: [symbols_using_it]}
 
-        # Step 0: Check stablecoins and cache
-        for token in tokens:
-            sym = token["symbol"].upper()
-            addr = token["address"].lower()
+        # Step 1: Check stablecoins and cache first
+        for raw_sym in symbols:
+            sym = raw_sym.upper()
 
             if sym in STABLECOIN_SYMBOLS:
                 result[sym] = 1.0
                 continue
 
-            cached = self._get_cached(f"addr:{addr}")
+            cached = self._get_cached(sym)
             if cached is not None:
                 result[sym] = cached
                 continue
 
-            cached = self._get_cached(f"sym:{sym}")
-            if cached is not None:
-                result[sym] = cached
+            # Look up CoinGecko ID
+            cg_id = SYMBOL_TO_COINGECKO_ID.get(sym)
+            if cg_id is None:
+                logger.warning(f"No CoinGecko mapping for symbol '{sym}', price unavailable")
+                result[sym] = None
                 continue
 
-            tokens_needing_lookup.append(token)
+            # Group by CoinGecko ID (multiple symbols may map to same ID)
+            if cg_id not in ids_to_fetch:
+                ids_to_fetch[cg_id] = []
+            ids_to_fetch[cg_id].append(sym)
 
-        if not tokens_needing_lookup:
-            return result
-
-        # Step 1: Try contract address lookup
-        platform = CHAIN_TO_PLATFORM.get(chain)
-        if platform:
-            addresses = [t["address"].lower() for t in tokens_needing_lookup]
-            addr_to_sym = {t["address"].lower(): t["symbol"].upper() for t in tokens_needing_lookup}
-
+        # Step 2: Single batched API call for all remaining tokens
+        if ids_to_fetch:
             try:
+                ids_param = ",".join(ids_to_fetch.keys())
+                logger.info(f"CoinGecko batch request: ids={ids_param}")
+
                 resp = requests.get(
-                    f"{COINGECKO_BASE_URL}/simple/token_price/{platform}",
-                    params={
-                        "contract_addresses": ",".join(addresses),
-                        "vs_currencies": "usd",
-                    },
+                    f"{COINGECKO_BASE_URL}/simple/price",
+                    params={"ids": ids_param, "vs_currencies": "usd"},
                     timeout=10,
                 )
                 resp.raise_for_status()
                 data = resp.json()
 
-                still_missing = []
-                for token in tokens_needing_lookup:
-                    addr = token["address"].lower()
-                    sym = token["symbol"].upper()
-                    price = data.get(addr, {}).get("usd")
-                    if price is not None:
-                        self._set_cache(f"addr:{addr}", price)
+                for cg_id, syms in ids_to_fetch.items():
+                    price = data.get(cg_id, {}).get("usd")
+                    for sym in syms:
+                        if price is not None:
+                            self._set_cache(sym, price)
+                            logger.info(f"Price: {sym} = ${price:,.2f}")
+                        else:
+                            logger.warning(f"No price returned for {sym} (cg_id={cg_id})")
                         result[sym] = price
-                        logger.info(f"Price via contract: {sym} ({addr}) = ${price}")
-                    else:
-                        still_missing.append(token)
-
-                tokens_needing_lookup = still_missing
 
             except Exception as e:
-                logger.warning(f"Contract address price lookup failed for {chain}: {e}")
-                # Fall through to symbol-based lookup
-
-        # Step 2: Fallback to symbol-based lookup for remaining tokens
-        if tokens_needing_lookup:
-            ids_to_fetch = []
-            sym_to_id = {}
-
-            for token in tokens_needing_lookup:
-                sym = token["symbol"].upper()
-                cg_id = SYMBOL_TO_COINGECKO_ID.get(sym)
-                if cg_id is None and sym in STABLECOIN_SYMBOLS:
-                    result[sym] = 1.0
-                    continue
-                if cg_id is None:
-                    logger.warning(f"No CoinGecko mapping for {sym}, price unavailable")
-                    result[sym] = None
-                    continue
-
-                ids_to_fetch.append(cg_id)
-                sym_to_id[sym] = cg_id
-
-            if ids_to_fetch:
-                try:
-                    resp = requests.get(
-                        f"{COINGECKO_BASE_URL}/simple/price",
-                        params={"ids": ",".join(set(ids_to_fetch)), "vs_currencies": "usd"},
-                        timeout=10,
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    for sym, cg_id in sym_to_id.items():
-                        price = data.get(cg_id, {}).get("usd")
-                        if price is not None:
-                            self._set_cache(f"sym:{sym}", price)
-                            logger.info(f"Price via symbol fallback: {sym} = ${price}")
-                        result[sym] = price
-                except Exception as e:
-                    logger.error(f"Symbol-based price lookup failed: {e}")
-                    for sym in sym_to_id:
-                        # Try stale cache
-                        stale = self._cache.get(f"sym:{sym}")
+                logger.error(f"CoinGecko API request failed: {e}")
+                # Fall back to stale cache for any remaining symbols
+                for cg_id, syms in ids_to_fetch.items():
+                    for sym in syms:
+                        stale = self._cache.get(sym)
                         result[sym] = stale[0] if stale else None
 
         return result
