@@ -139,6 +139,61 @@ class BlockchainClient:
         except Exception as e:
             logger.error(f"[{self.chain}] Error parsing tx {tx_hash}: {e}")
 
+    def parse_claim_tx(self, tx_hash: str) -> tuple[float, float]:
+        """Parse a Collect tx and return (amount0, amount1) claimed."""
+        try:
+            receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+            nft_manager_addr = Web3.to_checksum_address(self.config.position_manager)
+            # Collect(uint256,address,uint256,uint256)
+            COLLECT_TOPIC = self.w3.keccak(text="Collect(uint256,address,uint256,uint256)").hex()
+            
+            for log in receipt.logs:
+                if (log.address == nft_manager_addr 
+                        and len(log.topics) > 0 
+                        and log.topics[0].hex() == COLLECT_TOPIC):
+                    token_id_in_log = int(log.topics[1].hex(), 16)
+                    if token_id_in_log == self.position_id:
+                        data = log.data.hex().replace("0x", "")
+                        if len(data) >= 128:
+                            # The first 32 bytes of data is recipient address (sometimes indexed, sometimes not, but usually amount0 and amount1 are the last two)
+                            # Let's just safely decode the last 64 bytes
+                            amount0 = int(data[-128:-64], 16)
+                            amount1 = int(data[-64:], 16)
+                            
+                            c0 = amount0 / (10 ** self.token0_decimals)
+                            c1 = amount1 / (10 ** self.token1_decimals)
+                            return c0, c1
+            raise ValueError("Collect event not found for this position in the transaction.")
+        except Exception as e:
+            logger.error(f"Error parsing claim tx {tx_hash}: {e}")
+            raise e
+
+    def parse_increase_liq_tx(self, tx_hash: str) -> tuple[float, float]:
+        """Parse an IncreaseLiquidity tx and return (amount0, amount1) added."""
+        try:
+            receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+            nft_manager_addr = Web3.to_checksum_address(self.config.position_manager)
+            INCREASE_LIQ_TOPIC = self.w3.keccak(text="IncreaseLiquidity(uint256,uint128,uint256,uint256)").hex()
+            
+            for log in receipt.logs:
+                if (log.address == nft_manager_addr 
+                        and len(log.topics) > 0 
+                        and log.topics[0].hex() == INCREASE_LIQ_TOPIC):
+                    token_id_in_log = int(log.topics[1].hex(), 16)
+                    if token_id_in_log == self.position_id:
+                        data = log.data.hex().replace("0x", "")
+                        if len(data) >= 192:
+                            amount0 = int(data[64:128], 16)
+                            amount1 = int(data[128:192], 16)
+                            
+                            a0 = amount0 / (10 ** self.token0_decimals)
+                            a1 = amount1 / (10 ** self.token1_decimals)
+                            return a0, a1
+            raise ValueError("IncreaseLiquidity event not found for this position in the transaction.")
+        except Exception as e:
+            logger.error(f"Error parsing increase liq tx {tx_hash}: {e}")
+            raise e
+
     def get_current_state(self):
         """Fetches real-time state of the pool and position."""
         if not self.is_initialized:
@@ -216,9 +271,17 @@ class BlockchainClient:
                 self.token0_symbol: earned_0,
                 self.token1_symbol: earned_1
             },
+            "claimed_fees": {
+                self.token0_symbol: self.config.claimed_fees.get(self.token0_symbol, 0.0),
+                self.token1_symbol: self.config.claimed_fees.get(self.token1_symbol, 0.0)
+            },
             "initial_deposit": {
                 self.token0_symbol: self.initial_deposit_token0,
                 self.token1_symbol: self.initial_deposit_token1
+            },
+            "extra_deposits": {
+                self.token0_symbol: self.config.extra_deposits.get(self.token0_symbol, 0.0),
+                self.token1_symbol: self.config.extra_deposits.get(self.token1_symbol, 0.0)
             },
             "current_amounts": {
                 self.token0_symbol: current_amount0,

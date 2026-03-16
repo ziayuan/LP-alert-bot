@@ -25,6 +25,12 @@ CHAIN_PRESETS = {
         "factory": "0xFf7B3e8C00e57ea31477c32A5B52a58Eea47b072",
         "use_poa_middleware": False,
     },
+    "BASE": {
+        "rpc_url": "https://mainnet.base.org",
+        "position_manager": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
+        "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
+        "use_poa_middleware": False,
+    },
 }
 
 
@@ -38,6 +44,14 @@ class PositionConfig:
     position_id: int
     initial_tx_hash: str
     use_poa_middleware: bool = True  # BSC needs it, HyperEVM doesn't
+    claimed_fees: dict = None
+    extra_deposits: dict = None
+
+    def __post_init__(self):
+        if self.claimed_fees is None:
+            self.claimed_fees = {}
+        if self.extra_deposits is None:
+            self.extra_deposits = {}
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -79,6 +93,8 @@ class Config:
                 position_id=int(item["position_id"]),
                 initial_tx_hash=item.get("initial_tx_hash", ""),
                 use_poa_middleware=item.get("use_poa_middleware", False),
+                claimed_fees=item.get("claimed_fees", {}),
+                extra_deposits=item.get("extra_deposits", {}),
             ))
 
     @classmethod
@@ -116,6 +132,8 @@ class Config:
             chain_upper = "HyperEVM"
         elif chain_upper == "BSC":
             chain_upper = "BSC"
+        elif chain_upper == "BASE":
+            chain_upper = "BASE"
 
         preset = CHAIN_PRESETS.get(chain_upper)
         if not preset:
@@ -156,6 +174,26 @@ class Config:
         pos.initial_tx_hash = new_tx_hash
         cls._save_positions()
         return pos
+
+    @classmethod
+    def add_claimed_fees(cls, position_id: int, token: str, amount: float):
+        """Record newly claimed fees for a position and save."""
+        pos = cls.find_position(position_id)
+        if not pos:
+            raise ValueError(f"Position #{position_id} not found.")
+        curr = pos.claimed_fees.get(token, 0.0)
+        pos.claimed_fees[token] = curr + amount
+        cls._save_positions()
+
+    @classmethod
+    def add_extra_deposits(cls, position_id: int, token: str, amount: float):
+        """Record additional deposits for a position and save."""
+        pos = cls.find_position(position_id)
+        if not pos:
+            raise ValueError(f"Position #{position_id} not found.")
+        curr = pos.extra_deposits.get(token, 0.0)
+        pos.extra_deposits[token] = curr + amount
+        cls._save_positions()
 
     @classmethod
     def _save_positions(cls):

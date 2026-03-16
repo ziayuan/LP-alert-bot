@@ -32,6 +32,8 @@ class TelegramController:
         self.application.add_handler(CommandHandler("add", self.cmd_add))
         self.application.add_handler(CommandHandler("update", self.cmd_update))
         self.application.add_handler(CommandHandler("remove", self.cmd_remove))
+        self.application.add_handler(CommandHandler("claim", self.cmd_claim))
+        self.application.add_handler(CommandHandler("reinvest", self.cmd_reinvest))
 
     async def _check_auth(self, update: Update) -> bool:
         user_id = update.effective_user.id
@@ -58,15 +60,18 @@ class TelegramController:
             "🔍 `/status`\n"
             "  View all positions (price, range, fees, USD values, IL)\n\n"
             "➕ `/add <chain> <position_id> <tx_hash>`\n"
-            "  Add a new position\n"
-            "  chain: `BSC` or `HyperEVM`\n"
-            "  Example: `/add HyperEVM 12345 0xabc...`\n\n"
+            "  Add a new position (supported: BSC, HyperEVM, BASE)\n"
+            "  Example: `/add BASE 12345 0xabc...`\n\n"
             "🔄 `/update <old_id> <new_id> <new_tx_hash>`\n"
             "  Update a position's ID and TX hash\n"
             "  Example: `/update 12345 67890 0xdef...`\n\n"
             "🗑 `/remove <position_id>`\n"
             "  Remove a position from monitoring\n"
             "  Example: `/remove 12345`\n\n"
+            "💸 `/claim <position_id> <tx_hash>`\n"
+            "  Log claimed fees from a transaction\n\n"
+            "🔄 `/reinvest <position_id> <tx_hash>`\n"
+            "  Log added liquidity/reinvested fees from a transaction\n\n"
             "❓ `/help` — Show this command reference"
         )
         await update.message.reply_text(welcome_msg, parse_mode='Markdown')
@@ -83,6 +88,8 @@ class TelegramController:
             "➕ `/add <chain> <position_id> <tx_hash>` — Add position\n"
             "🔄 `/update <old_id> <new_id> <new_tx_hash>` — Update position\n"
             "🗑 `/remove <position_id>` — Remove position\n"
+            "💸 `/claim <id> <tx>` — Log claimed fees\n"
+            "🔄 `/reinvest <id> <tx>` — Log added liquidity\n"
             "🚀 `/start` — Show full command guide"
         )
         await update.message.reply_text(help_text, parse_mode='Markdown')
@@ -165,20 +172,36 @@ class TelegramController:
             msg += f"⬇️ Dist Lower: `{dist_lower:.2f}%`\n"
             msg += f"⬆️ Dist Upper: `{dist_upper:.2f}%`\n\n"
 
-        # Earned Fees with USD
-        msg += "*💰 Earned Fees*\n"
+        # Fetch and format Earned & Claimed Fees
+        unclaimed_fees_usd = 0.0
+        claimed_fees_usd = 0.0
         total_fees_usd = 0.0
-        has_any_price = False
+        has_any_fee_price = False
+        
+        msg += "*💰 Fees (Unclaimed)*\n"
         for token, amount in state["earned_fees"].items():
             token_price = prices.get(token.upper())
             msg += f"• {amount:.8f} {token}{usd_str(amount, token_price)}\n"
             if token_price is not None:
                 total_fees_usd += amount * token_price
-                has_any_price = True
-        if has_any_price:
-            msg += f"💵 Total Fees: ~${total_fees_usd:,.2f}\n"
+                has_any_fee_price = True
 
-        # Initial Deposit with USD
+        claimed_msg = ""
+        for token, amount in state.get("claimed_fees", {}).items():
+            if amount > 0:
+                token_price = prices.get(token.upper())
+                claimed_msg += f"• {amount:.8f} {token}{usd_str(amount, token_price)}\n"
+                if token_price is not None:
+                    total_fees_usd += amount * token_price
+                    has_any_fee_price = True
+        
+        if claimed_msg:
+            msg += f"\n*💸 Claimed Fees*\n{claimed_msg}"
+
+        if has_any_fee_price:
+            msg += f"💵 Total Fees (Earned + Claimed): ~${total_fees_usd:,.2f}\n"
+
+        # Initial & Extra Deposits with USD
         msg += "\n*📥 Initial Deposit*\n"
         total_deposit_usd = 0.0
         deposit_complete = True
@@ -189,9 +212,23 @@ class TelegramController:
                 total_deposit_usd += amount * token_price
             else:
                 deposit_complete = False
+
+        extra_msg = ""
+        for token, amount in state.get("extra_deposits", {}).items():
+            if amount > 0:
+                token_price = prices.get(token.upper())
+                extra_msg += f"• {amount:.6f} {token}{usd_str(amount, token_price)}\n"
+                if token_price is not None:
+                    total_deposit_usd += amount * token_price
+                else:
+                    deposit_complete = False
+        
+        if extra_msg:
+            msg += f"\n*➕ Extra Deposits*\n{extra_msg}"
+
         if total_deposit_usd > 0:
             suffix = "" if deposit_complete else " (partial)"
-            msg += f"💵 Total: ~${total_deposit_usd:,.2f}{suffix}\n"
+            msg += f"💵 Total Deposit: ~${total_deposit_usd:,.2f}{suffix}\n"
 
         # Current Position with USD
         msg += "\n*📦 Current Position*\n"
@@ -214,7 +251,7 @@ class TelegramController:
             il_pct = (il_usd / total_deposit_usd) * 100
             il_sign = "+" if il_usd >= 0 else ""
             il_emoji = "📈" if il_usd >= 0 else "📉"
-            msg += f"\n{il_emoji} *IL (vs. holding):* {il_sign}${il_usd:,.2f} ({il_sign}{il_pct:.2f}%)\n"
+            msg += f"\n{il_emoji} *IL (vs. holding principal):* {il_sign}${il_usd:,.2f} ({il_sign}{il_pct:.2f}%)\n"
 
         # APR (annualized fee yield based on position duration)
         open_ts = state.get("position_open_timestamp", 0)
@@ -225,7 +262,7 @@ class TelegramController:
                 days_open = elapsed_seconds / 86400
                 apr = (total_fees_usd / total_deposit_usd) * (365 / days_open) * 100
                 msg += (f"\n📊 *Fee APR:* `{apr:.2f}%`"
-                        f" (earned over `{days_open:.1f}` days)\n")
+                        f" (total fees over `{days_open:.1f}` days)\n")
 
         return msg
 
@@ -343,6 +380,101 @@ class TelegramController:
         except Exception as e:
             logger.error(f"Error in /remove: {e}", exc_info=True)
             await update.message.reply_text(f"❌ Failed: {e}")
+
+    # ── /claim ───────────────────────────────────────────────────
+
+    async def cmd_claim(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+
+        args = context.args
+        if not args or len(args) < 2:
+            await update.message.reply_text(
+                "❌ Usage: `/claim <position_id> <tx_hash>`",
+                parse_mode='Markdown'
+            )
+            return
+
+        try:
+            position_id = int(args[0])
+            tx_hash = args[1]
+        except ValueError:
+            await update.message.reply_text("❌ position_id must be a number.")
+            return
+
+        client = next((c for c in self.clients if c.position_id == position_id), None)
+        if not client:
+            await update.message.reply_text(f"❌ Position #{position_id} not found.")
+            return
+
+        await update.message.reply_text("⏳ Parsing claim transaction...")
+        try:
+            c0, c1 = await asyncio.to_thread(client.parse_claim_tx, tx_hash)
+            Config.add_claimed_fees(position_id, client.token0_symbol, c0)
+            Config.add_claimed_fees(position_id, client.token1_symbol, c1)
+            
+            await update.message.reply_text(
+                f"✅ Successfully recorded claimed fees for #{position_id}:\n"
+                f"• {c0:.6f} {client.token0_symbol}\n"
+                f"• {c1:.6f} {client.token1_symbol}"
+            )
+        except Exception as e:
+            logger.error(f"Error in /claim: {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Failed to parse claim: {e}")
+
+    # ── /reinvest ────────────────────────────────────────────────
+
+    async def cmd_reinvest(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self._check_auth(update):
+            return
+
+        args = context.args
+        if not args or len(args) < 2:
+            await update.message.reply_text(
+                "❌ Usage: `/reinvest <position_id> <tx_hash>`",
+                parse_mode='Markdown'
+            )
+            return
+
+        try:
+            position_id = int(args[0])
+            tx_hash = args[1]
+        except ValueError:
+            await update.message.reply_text("❌ position_id must be a number.")
+            return
+
+        client = next((c for c in self.clients if c.position_id == position_id), None)
+        if not client:
+            await update.message.reply_text(f"❌ Position #{position_id} not found.")
+            return
+
+        await update.message.reply_text("⏳ Parsing reinvest (add liquidity) transaction...")
+        try:
+            # Reinvest (add liquidity) emits BOTH Collect (for pending fees) AND IncreaseLiquidity
+            # So we parse both and record both.
+            try:
+                c0, c1 = await asyncio.to_thread(client.parse_claim_tx, tx_hash)
+                Config.add_claimed_fees(position_id, client.token0_symbol, c0)
+                Config.add_claimed_fees(position_id, client.token1_symbol, c1)
+                claimed_msg = f"Claimed:\n• {c0:.6f} {client.token0_symbol}\n• {c1:.6f} {client.token1_symbol}\n"
+            except ValueError:
+                claimed_msg = "No fees claimed in this transaction.\n"
+
+            a0, a1 = await asyncio.to_thread(client.parse_increase_liq_tx, tx_hash)
+            Config.add_extra_deposits(position_id, client.token0_symbol, a0)
+            Config.add_extra_deposits(position_id, client.token1_symbol, a1)
+            added_msg = f"Added Liquidity:\n• {a0:.6f} {client.token0_symbol}\n• {a1:.6f} {client.token1_symbol}"
+            
+            # Since we added liquidity, we must alert the blockchain client to re-fetch state/liquidity params
+            await asyncio.to_thread(client.reinitialize)
+            
+            await update.message.reply_text(
+                f"✅ Successfully recorded reinvestment for #{position_id}!\n\n"
+                f"{claimed_msg}\n{added_msg}"
+            )
+        except Exception as e:
+            logger.error(f"Error in /reinvest: {e}", exc_info=True)
+            await update.message.reply_text(f"❌ Failed to parse reinvestment: {e}")
 
     # ── Alert sending ─────────────────────────────────────────────
 
