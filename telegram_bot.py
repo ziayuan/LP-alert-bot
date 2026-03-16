@@ -296,9 +296,14 @@ class TelegramController:
             # 1. Add to config (validates chain, saves to .env)
             pos_config = Config.add_position(chain, position_id, tx_hash)
 
-            # 2. Create client and add to monitor
-            client = BlockchainClient(pos_config)
-            result = self.monitor_engine.add_client(client)
+            try:
+                # 2. Create client and add to monitor
+                client = BlockchainClient(pos_config)
+                result = self.monitor_engine.add_client(client)
+            except Exception as client_err:
+                # Rollback config if client fails to initialize (e.g. RPC dead)
+                Config.remove_position(position_id)
+                raise client_err
 
             # 3. Also add to our local clients list
             self.clients.append(client)
@@ -367,8 +372,11 @@ class TelegramController:
             return
 
         try:
-            # 1. Remove from monitor engine
-            result = self.monitor_engine.remove_client(position_id)
+            # 1. Remove from monitor engine (tolerate if missing)
+            try:
+                result = self.monitor_engine.remove_client(position_id)
+            except ValueError:
+                result = f"Position #{position_id} removed from config."
 
             # 2. Remove from our local clients list
             self.clients = [c for c in self.clients if c.position_id != position_id]

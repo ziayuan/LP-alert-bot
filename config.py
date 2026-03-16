@@ -85,14 +85,28 @@ class Config:
             raise ValueError(f"Failed to parse POSITIONS JSON: {e}")
 
         for item in items:
+            chain = item["chain"]
+            # Auto-heal: If chain exists in presets, override saved .env RPCs with our latest preset
+            preset = CHAIN_PRESETS.get(chain.upper())
+            if preset:
+                rpc_url = preset["rpc_url"]
+                position_manager = preset["position_manager"]
+                factory = preset["factory"]
+                use_poa = preset.get("use_poa_middleware", False)
+            else:
+                rpc_url = item["rpc_url"]
+                position_manager = item["position_manager"]
+                factory = item["factory"]
+                use_poa = item.get("use_poa_middleware", False)
+
             cls.POSITIONS.append(PositionConfig(
-                chain=item["chain"],
-                rpc_url=item["rpc_url"],
-                position_manager=item["position_manager"],
-                factory=item["factory"],
+                chain=chain,
+                rpc_url=rpc_url,
+                position_manager=position_manager,
+                factory=factory,
                 position_id=int(item["position_id"]),
                 initial_tx_hash=item.get("initial_tx_hash", ""),
-                use_poa_middleware=item.get("use_poa_middleware", False),
+                use_poa_middleware=use_poa,
                 claimed_fees=item.get("claimed_fees", {}),
                 extra_deposits=item.get("extra_deposits", {}),
             ))
