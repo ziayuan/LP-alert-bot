@@ -26,7 +26,7 @@ CHAIN_PRESETS = {
         "use_poa_middleware": False,
     },
     "BASE": {
-        "rpc_url": "https://base.llama.rpc.com",
+        "rpc_url": "https://base.drpc.org",
         "position_manager": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
         "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
         "use_poa_middleware": False,
