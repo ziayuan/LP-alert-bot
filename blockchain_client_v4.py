@@ -212,15 +212,18 @@ class BlockchainClientV4(BlockchainClient):
             },
             "initial_deposit": {
                 self.token0_symbol: self.initial_deposit_token0,
-                self.token1_symbol: self.initial_deposit_token1,
-                "timestamp": self.position_open_timestamp
+                self.token1_symbol: self.initial_deposit_token1
             },
-            "current_position": {
+            "extra_deposits": {
+                self.token0_symbol: self.config.extra_deposits.get(self.token0_symbol, 0.0),
+                self.token1_symbol: self.config.extra_deposits.get(self.token1_symbol, 0.0)
+            },
+            "current_amounts": {
                 self.token0_symbol: bal0,
                 self.token1_symbol: bal1
             },
-            "is_in_range": (self.tick_lower <= current_tick <= self.tick_upper),
-            "extra_deposits": self.config.extra_deposits
+            "position_open_timestamp": self.position_open_timestamp,
+            "is_in_range": (self.tick_lower <= current_tick <= self.tick_upper)
         }
         return current_state
 
