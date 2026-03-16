@@ -249,8 +249,8 @@ class BlockchainClientV4(BlockchainClient):
 
     def parse_claim_tx(self, tx_hash: str):
         # Implement later or map generically
-        return {"token0": 0.0, "token1": 0.0}
+        return 0.0, 0.0
 
     def parse_increase_liq_tx(self, tx_hash: str):
         # Implement later or map generically
-        return {"token0": 0.0, "token1": 0.0}
+        return 0.0, 0.0
