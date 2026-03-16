@@ -6,6 +6,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes
 
 from config import Config
 from blockchain_client import BlockchainClient
+from blockchain_client_v4 import BlockchainClientV4
 from price_service import price_service
 
 if TYPE_CHECKING:
@@ -298,7 +299,10 @@ class TelegramController:
 
             try:
                 # 2. Create client and add to monitor
-                client = BlockchainClient(pos_config)
+                if pos_config.is_v4:
+                    client = BlockchainClientV4(pos_config)
+                else:
+                    client = BlockchainClient(pos_config)
                 result = self.monitor_engine.add_client(client)
             except Exception as client_err:
                 # Rollback config if client fails to initialize (e.g. RPC dead)

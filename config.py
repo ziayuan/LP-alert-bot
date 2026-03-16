@@ -30,6 +30,14 @@ CHAIN_PRESETS = {
         "position_manager": "0x03a520b32C04BF3bEEf7BEb72E919cf822Ed34f1",
         "factory": "0x33128a8fC17869897dcE68Ed026d694621f6FDfD",
         "use_poa_middleware": False,
+        "is_v4": False,
+    },
+    "BASE_V4": {
+        "rpc_url": "https://base.drpc.org",
+        "position_manager": "0x7C5f5A4bBd8fD63184577525326123B519429bDc",
+        "factory": "0x000000000022D473030F116dDEE9F6B43aC78BA3",  # For V4 this is the PoolManager
+        "use_poa_middleware": False,
+        "is_v4": True,
     },
 }
 
@@ -44,6 +52,7 @@ class PositionConfig:
     position_id: int
     initial_tx_hash: str
     use_poa_middleware: bool = True  # BSC needs it, HyperEVM doesn't
+    is_v4: bool = False
     claimed_fees: dict = None
     extra_deposits: dict = None
 
@@ -93,11 +102,13 @@ class Config:
                 position_manager = preset["position_manager"]
                 factory = preset["factory"]
                 use_poa = preset.get("use_poa_middleware", False)
+                is_v4 = preset.get("is_v4", False)
             else:
                 rpc_url = item["rpc_url"]
                 position_manager = item["position_manager"]
                 factory = item["factory"]
                 use_poa = item.get("use_poa_middleware", False)
+                is_v4 = item.get("is_v4", False)
 
             cls.POSITIONS.append(PositionConfig(
                 chain=chain,
@@ -107,6 +118,7 @@ class Config:
                 position_id=int(item["position_id"]),
                 initial_tx_hash=item.get("initial_tx_hash", ""),
                 use_poa_middleware=use_poa,
+                is_v4=is_v4,
                 claimed_fees=item.get("claimed_fees", {}),
                 extra_deposits=item.get("extra_deposits", {}),
             ))
@@ -148,6 +160,8 @@ class Config:
             chain_upper = "BSC"
         elif chain_upper == "BASE":
             chain_upper = "BASE"
+        elif chain_upper in ("BASE_V4", "BASEV4"):
+            chain_upper = "BASE_V4"
 
         preset = CHAIN_PRESETS.get(chain_upper)
         if not preset:

@@ -4,6 +4,7 @@ import logging.handlers
 import signal
 import sys
 from blockchain_client import BlockchainClient
+from blockchain_client_v4 import BlockchainClientV4
 from telegram_bot import TelegramController
 from monitor_engine import MonitorEngine
 from config import Config
@@ -33,7 +34,10 @@ async def main():
     clients = []
     for pos_cfg in Config.POSITIONS:
         try:
-            client = BlockchainClient(pos_cfg)
+            if pos_cfg.is_v4:
+                client = BlockchainClientV4(pos_cfg)
+            else:
+                client = BlockchainClient(pos_cfg)
             clients.append(client)
             logger.info(f"[{pos_cfg.chain}] Client created for Position #{pos_cfg.position_id}")
         except Exception as e:
