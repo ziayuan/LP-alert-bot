@@ -184,27 +184,42 @@ class BlockchainClientV4(BlockchainClient):
         price_lower = tick_to_price(self.tick_lower, self.token0_decimals, self.token1_decimals)
         price_upper = tick_to_price(self.tick_upper, self.token0_decimals, self.token1_decimals)
 
+        bounds = sorted([price_lower, price_upper])
+
         current_state = {
-            "token0": self.token0_symbol,
-            "token1": self.token1_symbol,
-            "current_price": current_price,
-            "price_lower": price_lower,
-            "price_upper": price_upper,
+            "chain": self.chain,
+            "position_id": self.position_id,
+            "pair": f"{self.token0_symbol}/{self.token1_symbol}",
+            "token0_symbol": self.token0_symbol,
+            "token1_symbol": self.token1_symbol,
+            "token0_address": self.token0,
+            "token1_address": self.token1,
             "current_tick": current_tick,
-            "is_in_range": (self.tick_lower <= current_tick <= self.tick_upper),
-            "unclaimed_fees": {"token0": 0, "token1": 0}, # Hard to get pending fees cleanly in V4 without complex hooks logic
+            "current_price": current_price,
+            "sqrt_price_x96": sqrt_price_x96,
+            "tick_lower": self.tick_lower,
+            "tick_upper": self.tick_upper,
+            "price_lower": bounds[0],
+            "price_upper": bounds[1],
+            "liquidity": liquidity,
+            "earned_fees": {
+                self.token0_symbol: 0,
+                self.token1_symbol: 0
+            },
+            "claimed_fees": {
+                self.token0_symbol: self.config.claimed_fees.get(self.token0_symbol, 0.0),
+                self.token1_symbol: self.config.claimed_fees.get(self.token1_symbol, 0.0)
+            },
             "initial_deposit": {
-                "token0": self.initial_deposit_token0,
-                "token1": self.initial_deposit_token1,
+                self.token0_symbol: self.initial_deposit_token0,
+                self.token1_symbol: self.initial_deposit_token1,
                 "timestamp": self.position_open_timestamp
             },
             "current_position": {
-                "token0": bal0,
-                "token1": bal1
+                self.token0_symbol: bal0,
+                self.token1_symbol: bal1
             },
-            "sqrt_price_x96": sqrt_price_x96,
-            "liquidity": liquidity,
-            "claimed_fees": self.config.claimed_fees,
+            "is_in_range": (self.tick_lower <= current_tick <= self.tick_upper),
             "extra_deposits": self.config.extra_deposits
         }
         return current_state
