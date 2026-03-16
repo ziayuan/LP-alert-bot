@@ -153,18 +153,38 @@ class BlockchainClientV4(BlockchainClient):
         sqrt_price_x96, current_tick, _, _ = self.state_view.functions.getSlot0(self.pool_id).call()
         current_price = tick_to_price(current_tick, self.token0_decimals, self.token1_decimals)
         
-        # 2. Extract position info and uncollected fees (V4 PositionManager)
-        # In V4, actual liquidity for the tokenId is directly queryable without knowing bounds.
-        # But for exact uncollected fees and amounts, we still need tickLower, tickUpper.
-        # Let's get the bounds from the PositionManager if we didn't get them from the TX.
-        if self.tick_lower is None or self.tick_upper is None:
-            # We must parse position_info. V4 positionInfo returns `info` uint256 which is:
-            # {feeGrowthInside0LastX128 (128) | tickUpper (24) | tickLower (24) | liquidity (128)}
-            # Wait, 128+24+24+128 = 304 bits! It doesn't fit in uint256!
-            # The PositionInfo struct in V4 PositionManager is:
-            # (uint128 liquidity, int24 tickLower, int24 tickUpper, uint256 feeGrowthInside0LastX128, uint256 feeGrowthInside1LastX128) - No, it's packed in a uint256?
-            # Actually, `getPositionLiquidity` is simpler:
-            pass
+        # Calculate Pending Fees
+        pos_id = None
+        uncollected_fees_0 = 0
+        uncollected_fees_1 = 0
+        try:
+            # 1. Calculate salt and position id
+            salt = self.position_id.to_bytes(32, 'big')
+            buf = bytearray()
+            # owner of the Position in PoolManager is the PositionManager NFT contract
+            pm_addr = Web3.to_checksum_address(self.config.position_manager)
+            buf.extend(bytes.fromhex(pm_addr[2:]))
+            buf.extend(self.tick_lower.to_bytes(3, 'big', signed=True))
+            buf.extend(self.tick_upper.to_bytes(3, 'big', signed=True))
+            buf.extend(salt)
+            pos_id = self.w3.keccak(bytes(buf))
+
+            # 2. Get liquidity and feeGrowthLast from StateView
+            liq, fgInside0Last, fgInside1Last = self.state_view.functions.getPositionInfo(self.pool_id, pos_id).call()
+            
+            # 3. Get current feeGrowthInside from StateView
+            fgInside0, fgInside1 = self.state_view.functions.getFeeGrowthInside(self.pool_id, self.tick_lower, self.tick_upper).call()
+            
+            # 4. Calculate pending fees
+            Q128 = 2**128
+            MAX_UINT256 = 2**256 - 1
+            uncollected_fees_0 = (liq * ((fgInside0 - fgInside0Last) % (MAX_UINT256 + 1))) // Q128
+            uncollected_fees_1 = (liq * ((fgInside1 - fgInside1Last) % (MAX_UINT256 + 1))) // Q128
+        except Exception as e:
+            logger.warning(f"[{self.chain}] Failed to fetch V4 pending fees: {e}")
+
+        earned_0 = uncollected_fees_0 / (10 ** self.token0_decimals)
+        earned_1 = uncollected_fees_1 / (10 ** self.token1_decimals)
 
         liquidity = self.position_manager.functions.getPositionLiquidity(self.position_id).call()
         
@@ -203,8 +223,8 @@ class BlockchainClientV4(BlockchainClient):
             "price_upper": bounds[1],
             "liquidity": liquidity,
             "earned_fees": {
-                self.token0_symbol: 0,
-                self.token1_symbol: 0
+                self.token0_symbol: earned_0,
+                self.token1_symbol: earned_1
             },
             "claimed_fees": {
                 self.token0_symbol: self.config.claimed_fees.get(self.token0_symbol, 0.0),
